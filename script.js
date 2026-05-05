@@ -593,10 +593,7 @@ function renderTopPerformingStyles() {
 
     container.innerHTML = styles.map(([style, data], index) => {
         const example = findExampleForStyle(style, state.topStyleExampleKeys);
-        if (example) state.topStyleExampleKeys.add(getExampleKey(example));
-        const exampleHtml = example
-            ? `<p class="prompt-text">${escapeHTML(trimText(example.prompt, 320))}</p>`
-            : `<p class="prompt-text muted">No sample prompt variant available for this style.</p>`;
+        state.topStyleExampleKeys.add(getExampleKey(example));
         return `
             <article class="style-card">
                 <div class="style-rank">${index + 1}</div>
@@ -607,7 +604,7 @@ function renderTopPerformingStyles() {
                         <span>Overall ${data.overallAverage.toFixed(2)}</span>
                         <span>N=${data.count}</span>
                     </div>
-                    ${exampleHtml}
+                    <p class="prompt-text">${escapeHTML(trimText(example.prompt, 320))}</p>
                 </div>
             </article>
         `;
@@ -1082,9 +1079,18 @@ function getRandomTestedExamples(styles, excludedKeys, count) {
 }
 
 function findExampleForStyle(style, excludedKeys = new Set()) {
-    return state.examples
+    const scoredExample = state.examples
         .filter(example => example.style === style && !excludedKeys.has(getExampleKey(example)))
-        .sort((a, b) => (b.tf - a.tf) || (b.average - a.average))[0] || null;
+        .sort((a, b) => (b.tf - a.tf) || (b.average - a.average))[0];
+    if (scoredExample) return scoredExample;
+
+    return {
+        dataset: state.currentDataset,
+        model: state.currentModel,
+        prompt_count: `style-example-${style}`,
+        style,
+        prompt: getStyleTooltip(style),
+    };
 }
 
 function isRecommendableStyle(style) {
