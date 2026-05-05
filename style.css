@@ -242,6 +242,21 @@ nav {
     gap: 1rem;
 }
 
+.baseline-ranking-item {
+    background: #f6f8fb;
+    border: 1px solid #dce6f2;
+    border-radius: 6px;
+    padding: 0.65rem 0.75rem;
+}
+
+.ranking-divider {
+    color: #6c757d;
+    font-size: 0.9rem;
+    font-weight: 700;
+    margin: 1rem 0 0.8rem 216px;
+    text-transform: uppercase;
+}
+
 .ranking-label {
     width: 200px;
     font-weight: bold;
@@ -319,6 +334,21 @@ nav {
     font-weight: bold;
     white-space: nowrap;
     transition: width 0.5s ease-out;
+}
+
+.ranking-score-meta {
+    color: #526274;
+    flex: 0 0 120px;
+    font-size: 0.85rem;
+    font-weight: 700;
+}
+
+.ranking-score-meta.positive {
+    color: #1d6b44;
+}
+
+.ranking-score-meta.negative {
+    color: #9b2c2c;
 }
 
 

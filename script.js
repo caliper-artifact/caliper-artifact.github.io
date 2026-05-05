@@ -17,7 +17,8 @@ const DATA_PATHS = {
     instructions: (dataset) => `/samples/prompts_paraphrases/${DATASET_FILES[dataset]}`,
     scores: (dataset, model) => `/samples/metric_scores/${dataset}/${model}_sample100.json`,
     examples: () => "/site_data/high_performing_examples.json",
-    styleTooltips: () => "/site_data/style_tooltip_examples.json"
+    styleTooltips: () => "/site_data/style_tooltip_examples.json",
+    aggregates: () => "/site_data/full_aggregate_metrics.json"
 };
 
 let state = {
@@ -28,8 +29,10 @@ let state = {
     promptIndex: new Map(),
     examples: [],
     exampleBundle: null,
+    aggregateBundle: null,
     styleTooltipExamples: {},
     aggregatedData: {}, // Holds processed averages, stddevs, etc.
+    sampleAggregatedData: {},
     corpusSignals: {},
     topStyleExampleKeys: new Set(),
     spiderChart: null,
@@ -349,15 +352,18 @@ async function loadAndProcessData() {
 
         state.instructions = await instructionsRes.json();
         state.scores = await scoresRes.json();
-        if (!state.exampleBundle) {
-            const [examplesRes, tooltipRes] = await Promise.all([
+        if (!state.exampleBundle || !state.aggregateBundle) {
+            const [examplesRes, tooltipRes, aggregatesRes] = await Promise.all([
                 fetch(DATA_PATHS.examples()),
-                fetch(DATA_PATHS.styleTooltips())
+                fetch(DATA_PATHS.styleTooltips()),
+                fetch(DATA_PATHS.aggregates())
             ]);
             if (!examplesRes.ok) throw new Error(`Failed to load examples: ${examplesRes.statusText}`);
             if (!tooltipRes.ok) throw new Error(`Failed to load style tooltips: ${tooltipRes.statusText}`);
+            if (!aggregatesRes.ok) throw new Error(`Failed to load full aggregate metrics: ${aggregatesRes.statusText}`);
             state.exampleBundle = await examplesRes.json();
             state.styleTooltipExamples = (await tooltipRes.json()).examples || {};
+            state.aggregateBundle = await aggregatesRes.json();
         }
         state.examples = state.exampleBundle?.[state.currentDataset]?.[state.currentModel] || [];
 
@@ -374,14 +380,25 @@ async function loadAndProcessData() {
 
 
 function processData() {
-    const aggregated = {};
-    const paraphraseKeys = new Set();
     state.promptIndex = new Map();
     state.instructions.forEach(item => {
         state.promptIndex.set(getPromptKey(item), item);
     });
 
-    state.scores.forEach(item => {
+    const sampleAggregated = buildSampleAggregates(state.scores);
+    const fullAggregated = state.aggregateBundle?.[state.currentDataset]?.[state.currentModel] || null;
+
+    state.sampleAggregatedData = sampleAggregated;
+    state.aggregatedData = mergeFullAggregatesWithSampleScores(fullAggregated, sampleAggregated);
+    state.corpusSignals = buildCorpusSignals();
+    console.log("Processed full aggregate data:", state.aggregatedData);
+}
+
+function buildSampleAggregates(scoreRows) {
+    const aggregated = {};
+    const paraphraseKeys = new Set();
+
+    scoreRows.forEach(item => {
         Object.keys(item).forEach(key => {
             if (key !== 'prompt_count' && key !== 'prompt_id') {
                 paraphraseKeys.add(key);
@@ -399,7 +416,7 @@ function processData() {
         };
     });
 
-    state.scores.forEach(item => {
+    scoreRows.forEach(item => {
         paraphraseKeys.forEach(key => {
             if (item[key] && Array.isArray(item[key])) {
                 aggregated[key].count++;
@@ -424,12 +441,31 @@ function processData() {
         }
     });
 
-    state.aggregatedData = aggregated;
-    state.corpusSignals = buildCorpusSignals();
-    console.log("Processed Data:", state.aggregatedData);
+    return aggregated;
 }
 
+function mergeFullAggregatesWithSampleScores(fullAggregated, sampleAggregated) {
+    if (!fullAggregated) return sampleAggregated;
 
+    const merged = {};
+    Object.entries(fullAggregated).forEach(([style, data]) => {
+        const sampleData = sampleAggregated[style];
+        merged[style] = {
+            count: data.count || 0,
+            averages: data.averages || Array(METRICS.length).fill(0),
+            stdDevs: data.stdDevs || Array(METRICS.length).fill(0),
+            overallAverage: data.overallAverage ?? calculateAverage(data.averages || []),
+            scores: sampleData?.scores || Array(METRICS.length).fill(0).map(() => []),
+            sampleCount: sampleData?.count || 0,
+        };
+    });
+
+    Object.entries(sampleAggregated).forEach(([style, data]) => {
+        if (!merged[style]) merged[style] = data;
+    });
+
+    return merged;
+}
 
 
 function renderAll() {
@@ -508,29 +544,44 @@ function renderOverviewTable() {
 
 function renderRankingList() {
     const container = document.getElementById('ranking-container');
-    const metricIndex = document.getElementById('ranking-metric-select').value;
+    const metricIndex = Number(document.getElementById('ranking-metric-select').value);
 
     if (!state.aggregatedData || Object.keys(state.aggregatedData).length === 0) return;
 
+    const originalData = state.aggregatedData.instruction_original;
+    const originalScore = originalData?.averages?.[metricIndex] ?? null;
     const sortedStyles = Object.entries(state.aggregatedData)
-        .filter(([, data]) => data.count > 0)
+        .filter(([style, data]) => style !== 'instruction_original' && data.count > 0)
         .sort(([, a], [, b]) => b.averages[metricIndex] - a.averages[metricIndex]);
 
     let listHtml = '';
+    if (originalData?.count > 0) {
+        listHtml += renderRankingItem('instruction_original', originalData, metricIndex, originalScore, true);
+        listHtml += '<div class="ranking-divider">Paraphrase styles ranked against the original baseline</div>';
+    }
     sortedStyles.forEach(([key, data]) => {
-        const score = data.averages[metricIndex];
-        const barWidth = (score / 10) * 100;
-        const tooltip = getStyleTooltip(key);
-        listHtml += `
-            <div class="ranking-item">
-                <div class="ranking-label tooltip-label" data-tooltip="${escapeAttribute(tooltip)}">${formatParaphraseStyle(key)}</div>
-                <div class="ranking-bar-container">
-                    <div class="ranking-bar" style="width: ${barWidth}%;">${score.toFixed(2)}</div>
-                </div>
-            </div>
-        `;
+        listHtml += renderRankingItem(key, data, metricIndex, originalScore, false);
     });
     container.innerHTML = listHtml;
+}
+
+function renderRankingItem(key, data, metricIndex, originalScore, isBaseline) {
+    const score = data.averages[metricIndex];
+    const barWidth = Math.max(2, Math.min(100, (score / 10) * 100));
+    const tooltip = getStyleTooltip(key);
+    const delta = !isBaseline && Number.isFinite(originalScore) ? score - originalScore : null;
+    const deltaClass = delta === null ? 'baseline' : delta >= 0 ? 'positive' : 'negative';
+    const deltaText = delta === null ? 'baseline' : `${delta >= 0 ? '+' : ''}${delta.toFixed(2)} vs original`;
+
+    return `
+        <div class="ranking-item${isBaseline ? ' baseline-ranking-item' : ''}">
+            <div class="ranking-label tooltip-label" data-tooltip="${escapeAttribute(tooltip)}">${formatParaphraseStyle(key)}</div>
+            <div class="ranking-bar-container">
+                <div class="ranking-bar" style="width: ${barWidth}%;">${score.toFixed(2)}</div>
+            </div>
+            <div class="ranking-score-meta ${deltaClass}">${deltaText}</div>
+        </div>
+    `;
 }
 
 
@@ -542,9 +593,7 @@ function renderTopPerformingStyles() {
         return;
     }
 
-    const styles = getRankedStyles()
-        .filter(([style]) => style !== 'instruction_original')
-        .slice(0, 8);
+    const styles = getRecommendableStyles().slice(0, 8);
 
     container.innerHTML = styles.map(([style, data], index) => {
         const example = findExampleForStyle(style, state.topStyleExampleKeys);
@@ -829,7 +878,8 @@ const TOPIC_FEATURES = {
     ]
 };
 
-const RISKY_STYLE_RE = /(leet|base64|morse|rot13|reversed|typo|fewest|haiku|poetic|rap|emoji_only|empty_input|no_spaces|random|key_smash|malapropism)/;
+const RISKY_STYLE_RE = /(leet|base64|morse|rot13|reversed|typo|fewest|haiku|poetic|rap|emoji|emoticon|empty_input|no_spaces|random|key_smash|malapropism)/;
+const NON_RECOMMENDABLE_STYLE_RE = /(spoiler|curly_quotation|markdown_italic|markdown_bold|alternating_case|all_caps|lowercase|uppercase|klingon|pirate|yoda|shakespeare|archaic|sarcastic|profane|insulting)/;
 const STABLE_STYLE_BONUS = {
     instruct_direct_question: 2.0,
     instruct_polite_request: 1.5,
@@ -966,14 +1016,12 @@ function collectRiskWarnings(query, signals, detectedStyle) {
 }
 
 function recommendStyles(analysis) {
-    return getRankedStyles().map(([style, data]) => {
-        if (style === "instruction_original" || data.count === 0) return null;
+    return getRecommendableStyles().map(([style, data]) => {
         let score = data.averages[0] * 1.8 + data.overallAverage * 0.6 + (STABLE_STYLE_BONUS[style] || 0);
-        if (RISKY_STYLE_RE.test(style)) score -= 5;
         if (analysis.topic.dataset === "gsm8k" && /(step|number|exact|markdown|direct)/.test(style)) score += 1.2;
         if (analysis.topic.dataset === "mmlu" && /(direct|neutral|summary|risk|markdown)/.test(style)) score += 1.0;
         if (analysis.topic.dataset === "alpaca" && /(bullet|markdown|summary|direct|polite)/.test(style)) score += 0.8;
-        if (analysis.styleScores.has(style) && !RISKY_STYLE_RE.test(style)) score += 0.4;
+        if (analysis.styleScores.has(style)) score += 0.4;
         const reason = buildRecommendationReason(style, analysis.topic.dataset);
         return { style, data, score, reason };
     }).filter(Boolean).sort((a, b) => b.score - a.score);
@@ -1041,6 +1089,25 @@ function findExampleForStyle(style, excludedKeys = new Set()) {
     return state.examples
         .filter(example => example.style === style && !excludedKeys.has(getExampleKey(example)))
         .sort((a, b) => (b.tf - a.tf) || (b.average - a.average))[0] || null;
+}
+
+function isRecommendableStyle(style) {
+    return style !== 'instruction_original'
+        && !RISKY_STYLE_RE.test(style)
+        && !NON_RECOMMENDABLE_STYLE_RE.test(style);
+}
+
+function getRecommendableStyles(metricIndex = 0) {
+    return Object.entries(state.aggregatedData)
+        .filter(([style, data]) => isRecommendableStyle(style) && data.count > 0)
+        .map(([style, data]) => {
+            const score = data.averages[metricIndex] * 1.5
+                + data.overallAverage * 0.7
+                + (STABLE_STYLE_BONUS[style] || 0);
+            return [style, data, score];
+        })
+        .sort((a, b) => (b[2] - a[2]) || (b[1].averages[metricIndex] - a[1].averages[metricIndex]))
+        .map(([style, data]) => [style, data]);
 }
 
 function getRankedStyles(metricIndex = 0) {

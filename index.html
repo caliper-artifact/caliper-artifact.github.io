@@ -45,7 +45,7 @@
         <div id="overview-page" class="page active-page">
             <section class="card">
                 <h2>Performance Matrix</h2>
-                <p>Average scores for each paraphrase style across all metrics. Higher scores are greener.</p>
+                <p>Full-artifact average scores for each paraphrase style across all metrics. Higher scores are greener.</p>
                 <div id="overview-table-container" class="table-container"></div>
             </section>
             <section class="card">
@@ -79,7 +79,7 @@
         <div id="ranking-page" class="page">
             <section class="card">
                 <h2>Paraphrase Style Ranking</h2>
-                <p>Rank paraphrase styles by their average score for a selected metric.</p>
+                <p>Compare full-artifact average scores for each paraphrase style against the original prompt baseline.</p>
                 <div class="control-group">
                     <label for="ranking-metric-select">Rank by Metric:</label>
                     <select id="ranking-metric-select"></select>
@@ -100,8 +100,8 @@
                 <div id="search-results-container"></div>
             </section>
             <section class="card">
-                <h2>Top Performing Styles</h2>
-                <p>Highest-scoring paraphrase styles for the selected dataset and model, with tested example prompts.</p>
+                <h2>Least Harmful Paraphrase Styles</h2>
+                <p>Recommended human-readable paraphrase styles from full artifact metrics, excluding high-fragility and decorative variants. Original prompt wording remains the baseline in Ranking.</p>
                 <div id="top-styles-container"></div>
             </section>
         </div>
