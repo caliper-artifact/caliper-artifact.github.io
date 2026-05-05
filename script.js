@@ -551,16 +551,12 @@ function renderRankingList() {
     const originalData = state.aggregatedData.instruction_original;
     const originalScore = originalData?.averages?.[metricIndex] ?? null;
     const sortedStyles = Object.entries(state.aggregatedData)
-        .filter(([style, data]) => style !== 'instruction_original' && data.count > 0)
+        .filter(([, data]) => data.count > 0)
         .sort(([, a], [, b]) => b.averages[metricIndex] - a.averages[metricIndex]);
 
     let listHtml = '';
-    if (originalData?.count > 0) {
-        listHtml += renderRankingItem('instruction_original', originalData, metricIndex, originalScore, true);
-        listHtml += '<div class="ranking-divider">Paraphrase styles ranked against the original baseline</div>';
-    }
     sortedStyles.forEach(([key, data]) => {
-        listHtml += renderRankingItem(key, data, metricIndex, originalScore, false);
+        listHtml += renderRankingItem(key, data, metricIndex, originalScore, key === 'instruction_original');
     });
     container.innerHTML = listHtml;
 }
