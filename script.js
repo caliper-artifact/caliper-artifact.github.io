@@ -16,7 +16,8 @@ const DATASET_FILES = {
 const DATA_PATHS = {
     instructions: (dataset) => `/samples/prompts_paraphrases/${DATASET_FILES[dataset]}`,
     scores: (dataset, model) => `/samples/metric_scores/${dataset}/${model}_sample100.json`,
-    examples: () => "/site_data/high_performing_examples.json"
+    examples: () => "/site_data/high_performing_examples.json",
+    styleTooltips: () => "/site_data/style_tooltip_examples.json"
 };
 
 let state = {
@@ -27,6 +28,7 @@ let state = {
     promptIndex: new Map(),
     examples: [],
     exampleBundle: null,
+    styleTooltipExamples: {},
     aggregatedData: {}, // Holds processed averages, stddevs, etc.
     corpusSignals: {},
     topStyleExampleKeys: new Set(),
@@ -348,9 +350,14 @@ async function loadAndProcessData() {
         state.instructions = await instructionsRes.json();
         state.scores = await scoresRes.json();
         if (!state.exampleBundle) {
-            const examplesRes = await fetch(DATA_PATHS.examples());
+            const [examplesRes, tooltipRes] = await Promise.all([
+                fetch(DATA_PATHS.examples()),
+                fetch(DATA_PATHS.styleTooltips())
+            ]);
             if (!examplesRes.ok) throw new Error(`Failed to load examples: ${examplesRes.statusText}`);
+            if (!tooltipRes.ok) throw new Error(`Failed to load style tooltips: ${tooltipRes.statusText}`);
             state.exampleBundle = await examplesRes.json();
+            state.styleTooltipExamples = (await tooltipRes.json()).examples || {};
         }
         state.examples = state.exampleBundle?.[state.currentDataset]?.[state.currentModel] || [];
 
@@ -513,9 +520,10 @@ function renderRankingList() {
     sortedStyles.forEach(([key, data]) => {
         const score = data.averages[metricIndex];
         const barWidth = (score / 10) * 100;
+        const tooltip = getStyleTooltip(key);
         listHtml += `
             <div class="ranking-item">
-                <div class="ranking-label">${formatParaphraseStyle(key)}</div>
+                <div class="ranking-label tooltip-label" data-tooltip="${escapeAttribute(tooltip)}">${formatParaphraseStyle(key)}</div>
                 <div class="ranking-bar-container">
                     <div class="ranking-bar" style="width: ${barWidth}%;">${score.toFixed(2)}</div>
                 </div>
@@ -1088,6 +1096,12 @@ function getPromptText(item) {
 
 function getExampleKey(example) {
     return `${example.dataset}|${example.model}|${example.prompt_count}|${example.style}`;
+}
+
+function getStyleTooltip(style) {
+    return state.styleTooltipExamples[style]
+        || state.styleTooltipExamples.instruction_original
+        || "What are the three primary colors?";
 }
 
 function trimText(text, maxLength) {
