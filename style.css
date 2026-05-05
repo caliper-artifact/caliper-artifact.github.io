@@ -310,6 +310,10 @@ nav {
 #search-results-container p { margin: 0.5rem 0; }
 #search-results-container strong { color: var(--primary-accent-color); }
 
+.style-card,
+.recommendation-card,
+.analysis-panel,
+.tested-examples,
 .best-prompt {
     background-color: #fdfdfe;
     border: 1px solid var(--border-color);
@@ -317,11 +321,127 @@ nav {
     margin-bottom: 1rem;
     border-radius: 4px;
 }
+
+.style-card {
+    display: grid;
+    grid-template-columns: 2.4rem 1fr;
+    gap: 0.9rem;
+}
+
+.style-rank {
+    width: 2.4rem;
+    height: 2.4rem;
+    border-radius: 50%;
+    background: #243447;
+    color: white;
+    display: grid;
+    place-items: center;
+    font-weight: 700;
+}
+
+.style-card h3,
+.recommendation-card h4,
+.analysis-panel h4 {
+    margin: 0 0 0.5rem;
+    text-align: left;
+    color: #243447;
+}
+
+.prompt-text,
 .best-prompt .prompt-text {
     font-style: italic;
     color: #333;
     margin-bottom: 0.5rem;
 }
+
+.muted {
+    color: #6c757d;
+}
+
+.score-pills {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+    margin: 0.4rem 0 0.7rem;
+}
+
+.score-pills span {
+    background: #eef4ff;
+    border: 1px solid #c9d9f5;
+    border-radius: 999px;
+    color: #26466d;
+    font-size: 0.85rem;
+    font-weight: 700;
+    padding: 0.2rem 0.55rem;
+}
+
+.analysis-grid,
+.recommendation-grid,
+.example-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 1rem;
+}
+
+.warning,
+.warning-panel {
+    color: #8a5a00;
+}
+
+.warning-panel {
+    background: #fff8e8;
+    border-color: #f2d28a;
+}
+
+.nearest-prompt {
+    border-left: 3px solid #c9d9f5;
+    padding-left: 0.7rem;
+}
+
+.tested-examples {
+    margin-top: -0.4rem;
+    margin-bottom: 1.2rem;
+}
+
+.tested-examples h3 {
+    margin: 0 0 0.75rem;
+    text-align: left;
+    color: #243447;
+}
+
+.card .example-card {
+    background: #fdfdfe;
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    color: var(--text-color);
+    cursor: pointer;
+    min-height: 9rem;
+    padding: 0.9rem;
+    text-align: left;
+}
+
+.card .example-card:hover {
+    border-color: var(--primary-accent-color);
+    background: #f4f8ff;
+}
+
+.example-card span {
+    color: #26466d;
+    display: block;
+    font-weight: 700;
+    margin-bottom: 0.25rem;
+}
+
+.example-card strong {
+    color: var(--primary-accent-color);
+    display: block;
+    margin-bottom: 0.35rem;
+}
+
+.example-card p {
+    margin: 0;
+}
+
 .best-prompt .prompt-score {
     font-weight: bold;
     color: #007bff;

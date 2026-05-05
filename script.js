@@ -14,8 +14,9 @@ const DATASET_FILES = {
 };
 
 const DATA_PATHS = {
-    instructions: (dataset) => `samples/prompts_paraphrases/${DATASET_FILES[dataset]}`,
-    scores: (dataset, model) => `samples/metric_scores/${dataset}/${model}_sample100.json`
+    instructions: (dataset) => `/samples/prompts_paraphrases/${DATASET_FILES[dataset]}`,
+    scores: (dataset, model) => `/samples/metric_scores/${dataset}/${model}_sample100.json`,
+    examples: () => "/site_data/high_performing_examples.json"
 };
 
 let state = {
@@ -23,7 +24,12 @@ let state = {
     currentModel: 'gemma-2-2b-it',
     instructions: [],
     scores: [],
+    promptIndex: new Map(),
+    examples: [],
+    exampleBundle: null,
     aggregatedData: {}, // Holds processed averages, stddevs, etc.
+    corpusSignals: {},
+    topStyleExampleKeys: new Set(),
     spiderChart: null,
     barChart: null,
     isLoading: true,
@@ -341,6 +347,12 @@ async function loadAndProcessData() {
 
         state.instructions = await instructionsRes.json();
         state.scores = await scoresRes.json();
+        if (!state.exampleBundle) {
+            const examplesRes = await fetch(DATA_PATHS.examples());
+            if (!examplesRes.ok) throw new Error(`Failed to load examples: ${examplesRes.statusText}`);
+            state.exampleBundle = await examplesRes.json();
+        }
+        state.examples = state.exampleBundle?.[state.currentDataset]?.[state.currentModel] || [];
 
         processData();
         renderAll();
@@ -357,6 +369,10 @@ async function loadAndProcessData() {
 function processData() {
     const aggregated = {};
     const paraphraseKeys = new Set();
+    state.promptIndex = new Map();
+    state.instructions.forEach(item => {
+        state.promptIndex.set(getPromptKey(item), item);
+    });
 
     state.scores.forEach(item => {
         Object.keys(item).forEach(key => {
@@ -402,6 +418,7 @@ function processData() {
     });
 
     state.aggregatedData = aggregated;
+    state.corpusSignals = buildCorpusSignals();
     console.log("Processed Data:", state.aggregatedData);
 }
 
@@ -429,7 +446,8 @@ function renderRankingPage() {
 }
 
 function renderSearchPage() {
-    renderBestPrompts();
+    renderTopPerformingStyles();
+    document.getElementById('example-suggestions-container').innerHTML = '';
 }
 
 
@@ -508,58 +526,39 @@ function renderRankingList() {
 }
 
 
-function renderBestPrompts() {
-    const container = document.getElementById('best-prompts-container');
-    if (state.instructions.length === 0 || state.scores.length === 0) {
-        container.innerHTML = "<p>Data not available to show best prompts.</p>";
+function renderTopPerformingStyles() {
+    const container = document.getElementById('top-styles-container');
+    state.topStyleExampleKeys = new Set();
+    if (!state.aggregatedData || Object.keys(state.aggregatedData).length === 0) {
+        container.innerHTML = "<p>Style data is not available.</p>";
         return;
     }
 
-    const promptScores = state.scores.map(scoreItem => {
-        const avgScore = calculateAverage(Object.values(scoreItem)
-            .flat() // Flatten in case of nested arrays (though scores are just arrays)
-            .filter(v => typeof v === 'number')
-        );
-        return { id: scoreItem.prompt_id, avgScore };
-    }).sort((a, b) => b.avgScore - a.avgScore).slice(0, 5); // Get top 5
+    const styles = getRankedStyles()
+        .filter(([style]) => style !== 'instruction_original')
+        .slice(0, 8);
 
-    const topPrompts = promptScores.map(ps => {
-        const instructionItem = state.instructions.find(i =>
-            i.prompt_id === ps.id || i.prompt_count === ps.id
-        );
-        return {
-            text: instructionItem
-                ? (instructionItem.instruction_original || instructionItem.instruction || "Prompt not found")
-                : "Prompt not found",
-            score: ps.avgScore
-        };
-    });
-
-    const allWords = topPrompts.map(p => p.text.toLowerCase().split(/\s+/)).flat();
-    const wordCounts = allWords.reduce((acc, word) => {
-        const cleanWord = word.replace(/[.,?]/g, '');
-        if (cleanWord.length > 3 && isNaN(cleanWord)) { // Ignore short words and numbers
-           acc[cleanWord] = (acc[cleanWord] || 0) + 1;
-        }
-        return acc;
-    }, {});
-    const commonWords = new Set(Object.entries(wordCounts).filter(([,count])=>count > 1).map(([word,])=>word));
-
-    let html = '';
-    topPrompts.forEach(prompt => {
-        let highlightedText = prompt.text.split(' ').map(word => {
-            const cleanWord = word.toLowerCase().replace(/[.,?]/g, '');
-            return commonWords.has(cleanWord) ? `<span class="highlight">${word}</span>` : word;
-        }).join(' ');
-
-        html += `
-            <div class="best-prompt">
-                <p class="prompt-text">${highlightedText}</p>
-                <p class="prompt-score">Average Score: ${prompt.score.toFixed(2)}</p>
-            </div>
+    container.innerHTML = styles.map(([style, data], index) => {
+        const example = findExampleForStyle(style, state.topStyleExampleKeys);
+        if (example) state.topStyleExampleKeys.add(getExampleKey(example));
+        const exampleHtml = example
+            ? `<p class="prompt-text">${escapeHTML(trimText(example.prompt, 320))}</p>`
+            : `<p class="prompt-text muted">No sample prompt variant available for this style.</p>`;
+        return `
+            <article class="style-card">
+                <div class="style-rank">${index + 1}</div>
+                <div class="style-card-body">
+                    <h3>${formatParaphraseStyle(style)}</h3>
+                    <div class="score-pills">
+                        <span>TF ${data.averages[0].toFixed(2)}</span>
+                        <span>Overall ${data.overallAverage.toFixed(2)}</span>
+                        <span>N=${data.count}</span>
+                    </div>
+                    ${exampleHtml}
+                </div>
+            </article>
         `;
-    });
-    container.innerHTML = html;
+    }).join('');
 }
 
 
@@ -623,7 +622,7 @@ function populateChartSelectors() {
         }
     });
 
-    const defaultSelections = ['instruction_original', 'instruct_apologetic', 'instruct_direct'].filter(s => sortedStyles.includes(s));
+    const defaultSelections = ['instruction_original', 'instruct_apologetic', 'instruct_direct_question'].filter(s => sortedStyles.includes(s));
     for (const option of spiderSelect.options) {
         if (defaultSelections.includes(option.value)) option.selected = true;
     }
@@ -760,78 +759,353 @@ function renderBarChart() {          // ← keep the old name: no other code bre
 
 
 
-const SEARCH_PATTERNS = {
-    instruct_apologetic: /\b(sorry|bother|please|kindly|if you could|trouble)\b/gi,
-    instruct_archaic: /\b(hark|thee|thou|beseech|pray|whence|henceforth)\b/gi,
-    instruct_colloquial: /\b(gonna|wanna|kinda|sorta|like|you know)\b/gi,
-    instruct_direct: /^\s*(give|list|explain|what is|tell me|generate|write)/gi,
-    instruct_formal: /\b(furthermore|consequently|regarding|it is imperative|would be appreciated)\b/gi,
-    topic_gsm8k: /\b(calculate|solve|how many|what is the total|number|equation|math)\b/gi,
-    topic_mmlu: /\b(philosophy|law|history|computer science|economics|biology|chemistry)\b/gi,
+const STOPWORDS = new Set([
+    "a","an","and","are","as","at","be","but","by","can","could","for","from","has","have",
+    "how","i","in","into","is","it","its","me","my","of","on","or","our","please","should",
+    "that","the","their","then","there","these","this","to","use","using","was","we","what",
+    "when","where","which","who","why","will","with","would","you","your"
+]);
+
+const STYLE_FEATURES = [
+    { style: "instruct_direct_question", label: "direct task request", risk: "low", patterns: [/^\s*(give|list|explain|write|generate|summarize|classify|compare|solve|calculate|answer)\b/i, /\bwhat\b.*\?$/i] },
+    { style: "instruct_polite_request", label: "polite request", risk: "low", patterns: [/\b(please|could you|would you|kindly|can you)\b/i] },
+    { style: "instruct_apologetic", label: "apologetic framing", risk: "low", patterns: [/\b(sorry|apologize|bother|trouble|if it'?s not too much)\b/i] },
+    { style: "instruct_formal_academic", label: "formal or academic language", risk: "low", patterns: [/\b(furthermore|therefore|consequently|articulate|delineate|evaluate|analyze|synthesize)\b/i] },
+    { style: "instruct_bureaucratic", label: "bureaucratic wording", risk: "medium", patterns: [/\b(pursuant|aforementioned|enumerate|comprehensive|classified as|provide a comprehensive)\b/i] },
+    { style: "instruct_legalese", label: "legal wording", risk: "medium", patterns: [/\b(pursuant|liability|statute|hereby|jurisdiction|compliance|regulatory|whereas)\b/i] },
+    { style: "instruct_finance_jargon", label: "finance jargon", risk: "medium", patterns: [/\b(asset|portfolio|risk-adjusted|capital|liquidity|return on|valuation|exposure)\b/i] },
+    { style: "instruct_medical_jargon", label: "medical jargon", risk: "medium", patterns: [/\b(diagnosis|clinical|symptom|treatment|patient|pathology|therapeutic)\b/i] },
+    { style: "instruct_software_jargon", label: "software jargon", risk: "low", patterns: [/\b(api|algorithm|runtime|schema|database|function|code|implementation|debug)\b/i] },
+    { style: "instruct_casual", label: "casual phrasing", risk: "low", patterns: [/\b(hey|yo|gonna|wanna|kinda|sorta|stuff|thingy)\b/i] },
+    { style: "instruct_slang_heavy", label: "slang-heavy phrasing", risk: "medium", patterns: [/\b(bro|fam|lit|vibe|lowkey|highkey|no cap)\b/i] },
+    { style: "instruct_sarcastic", label: "sarcastic or cynical tone", risk: "medium", patterns: [/\b(sure|obviously|totally|as if|groundbreaking|supposedly)\b/i] },
+    { style: "instruct_profane", label: "profane wording", risk: "medium", patterns: [/\b(hell|damn|shit|fuck|fucking)\b/i] },
+    { style: "instruct_insulting", label: "insulting wording", risk: "high", patterns: [/\b(idiot|stupid|moron|dumb|bet you can'?t)\b/i] },
+    { style: "instruct_humorous", label: "humor or joke setup", risk: "medium", patterns: [/\b(joke|funny|pun|riddle|humor|laugh)\b/i] },
+    { style: "instruct_haiku", label: "poetic or verse constraint", risk: "high", patterns: [/\b(haiku|poem|poetic|verse|rhyme|sonnet)\b/i] },
+    { style: "instruct_rap_verse", label: "rap or song-like prompt", risk: "high", patterns: [/\b(rap|bars|mic check|verse|rhyme scheme)\b/i] },
+    { style: "instruct_archaic", label: "archaic wording", risk: "medium", patterns: [/\b(hark|thee|thou|beseech|pray tell|whence|henceforth)\b/i] },
+    { style: "instruct_all_caps", label: "all-caps emphasis", risk: "medium", patterns: [/^[^a-z]*[A-Z][^a-z]*$/] },
+    { style: "instruct_emoji", label: "emoji or emoticon", risk: "medium", patterns: [/[\u{1F300}-\u{1FAFF}]/u, /(:-\)|:\)|;\)|:-D|:D)/] },
+    { style: "instruct_leet_speak", label: "leet or obfuscated text", risk: "high", patterns: [/\b[\w@#$]*[013457][\w@#$]*\b/i] },
+    { style: "instruct_base64", label: "encoded text", risk: "high", patterns: [/\b[A-Za-z0-9+/]{32,}={0,2}\b/] },
+    { style: "instruct_typo_random", label: "typos or keyboard noise", risk: "high", patterns: [/\b[a-z]*([a-z])\1{2,}[a-z]*\b/i, /\b(asdf|qwerty|jkl)\b/i, /[^\s]{18,}/] },
+    { style: "instruct_bullet_list", label: "bullet-list format", risk: "low", patterns: [/\b(bullet|bulleted|list of|enumerate)\b/i] },
+    { style: "instruct_numbered_steps", label: "numbered steps", risk: "low", patterns: [/\b(step by step|numbered steps|show steps|work through)\b/i] },
+    { style: "instruct_output_json", label: "JSON output request", risk: "low", patterns: [/\b(json|object|schema|key-value)\b/i] },
+    { style: "instruct_output_yaml", label: "YAML output request", risk: "low", patterns: [/\b(yaml)\b/i] },
+    { style: "instruct_output_sql", label: "SQL output request", risk: "medium", patterns: [/\b(sql|select|insert into|table schema)\b/i] },
+    { style: "instruct_code_fence", label: "code-fenced or markdown code", risk: "low", patterns: [/```/, /\b(code block|code fence)\b/i] },
+    { style: "instruct_markdown_doc", label: "markdown document structure", risk: "low", patterns: [/\b(markdown|heading|section|table)\b/i] },
+    { style: "instruct_with_citations", label: "citation request", risk: "medium", patterns: [/\b(cite|citation|sources|references|bibliography)\b/i] },
+    { style: "instruct_with_summary", label: "summary request", risk: "low", patterns: [/\b(summary|summarize|tldr|tl;dr)\b/i] },
+    { style: "instruct_risks_and_benefits", label: "risk-benefit framing", risk: "low", patterns: [/\b(risks? and benefits?|pros and cons|tradeoffs?)\b/i] },
+    { style: "instruct_exact_numbers", label: "exact numeric constraints", risk: "low", patterns: [/\b(exactly|no more than|at least|top \d+|\d+ (items|examples|tips|steps))\b/i] },
+    { style: "instruct_fewest_words", label: "extreme brevity constraint", risk: "high", patterns: [/\b(fewest words|one word|only \d+ words|ultra concise)\b/i] }
+];
+
+const TOPIC_FEATURES = {
+    gsm8k: [
+        { label: "arithmetic quantities", weight: 3, pattern: /\b(how many|total|altogether|left|remaining|each|per|twice|half|percent|ratio)\b/i },
+        { label: "explicit numbers", weight: 2, pattern: /\d/ },
+        { label: "math operations", weight: 3, pattern: /\b(calculate|solve|equation|sum|difference|product|divide|multiply)\b/i }
+    ],
+    mmlu: [
+        { label: "moral scenario", weight: 4, pattern: /\b(moral|morally|wrong|ordinary standards|scenario 1|scenario 2|ethics|ethical)\b/i },
+        { label: "knowledge discipline", weight: 2, pattern: /\b(philosophy|law|history|economics|biology|chemistry|physics|computer science|psychology)\b/i },
+        { label: "multiple choice", weight: 2, pattern: /\b(which of these|choose|answer option|option [abcd])\b/i }
+    ],
+    alpaca: [
+        { label: "open-ended instruction", weight: 2, pattern: /\b(write|generate|explain|describe|summarize|create|classify|translate|improve)\b/i },
+        { label: "general advice or writing", weight: 2, pattern: /\b(tips|email|article|story|plan|list|rewrite|dialogue)\b/i }
+    ]
+};
+
+const RISKY_STYLE_RE = /(leet|base64|morse|rot13|reversed|typo|fewest|haiku|poetic|rap|emoji_only|empty_input|no_spaces|random|key_smash|malapropism)/;
+const STABLE_STYLE_BONUS = {
+    instruct_direct_question: 2.0,
+    instruct_polite_request: 1.5,
+    instruct_bullet_list: 1.3,
+    instruct_numbered_steps: 1.4,
+    instruct_with_step_by_step: 1.4,
+    instruct_helpful_markdown_structure: 1.2,
+    instruct_output_markdown: 1.0,
+    instruct_exact_numbers: 1.0,
+    instruct_short_paragraph: 0.8,
+    instruct_with_summary: 0.8
 };
 
 function analyzeAndDisplaySearch(query) {
     const resultsContainer = document.getElementById('search-results-container');
+    const examplesContainer = document.getElementById('example-suggestions-container');
     if (!query.trim()) {
         resultsContainer.innerHTML = '<p>Please enter a prompt to analyze.</p>';
+        examplesContainer.innerHTML = '';
         return;
     }
 
-    let bestStyleMatch = 'instruction_original'; // Default
-    let maxStyleMatches = 0;
-    for (const [style, pattern] of Object.entries(SEARCH_PATTERNS)) {
-        if (!style.startsWith('topic_')) {
-            const matches = (query.match(pattern) || []).length;
-            if (matches > maxStyleMatches) {
-                maxStyleMatches = matches;
-                bestStyleMatch = style;
-            }
-        }
-    }
+    const analysis = analyzePrompt(query);
+    const detectedData = state.aggregatedData[analysis.detectedStyle];
+    const recommendations = recommendStyles(analysis).slice(0, 3);
+    const examples = getRandomTestedExamples(
+        recommendations.map(r => r.style),
+        new Set(state.topStyleExampleKeys),
+        3
+    );
 
-    let bestTopicMatch = 'alpaca'; // Default
-    if (SEARCH_PATTERNS.topic_gsm8k.test(query)) bestTopicMatch = 'gsm8k';
-    if (SEARCH_PATTERNS.topic_mmlu.test(query)) bestTopicMatch = 'mmlu';
+    renderExampleSuggestions(examples);
 
-    let resultHTML = `<p><strong>Analysis Results:</strong></p>`;
-    resultHTML += `<p>Detected Prompt Style: <strong>${formatParaphraseStyle(bestStyleMatch)}</strong></p>`;
-    resultHTML += `<p>Detected Topic: <strong>${bestTopicMatch}</strong></p>`;
-    
-    if (bestTopicMatch !== state.currentDataset) {
-        resultHTML += `<p style="color:orange;">Warning: Prompt topic may not match the currently loaded '${state.currentDataset}' dataset. Performance prediction might be inaccurate. Please switch datasets for a better prediction.</p>`;
-    }
-    
-    const predictedPerf = state.aggregatedData[bestStyleMatch];
-    if(predictedPerf) {
-         resultHTML += `<p>Predicted Average Score: <strong style="font-size: 1.2em;">${predictedPerf.overallAverage.toFixed(2)} / 10</strong></p>`;
-    } else {
-         resultHTML += `<p>Could not retrieve performance data for the detected style.</p>`;
-    }
+    const warning = analysis.topic.dataset !== state.currentDataset
+        ? `<p class="warning">Detected topic looks closer to ${analysis.topic.dataset.toUpperCase()} than the selected ${state.currentDataset.toUpperCase()} dataset.</p>`
+        : '';
+    const detectedScore = detectedData
+        ? `<span>TF ${detectedData.averages[0].toFixed(2)}</span><span>Overall ${detectedData.overallAverage.toFixed(2)}</span>`
+        : `<span>No score data for detected style</span>`;
+    const signalItems = analysis.signals.slice(0, 8).map(signal =>
+        `<li><strong>${escapeHTML(signal.label)}</strong> (${signal.risk} risk)</li>`
+    ).join('');
+    const riskHtml = analysis.risks.length
+        ? `<div class="analysis-panel warning-panel"><h4>Fragility Warnings</h4><ul>${analysis.risks.map(r => `<li>${escapeHTML(r)}</li>`).join('')}</ul></div>`
+        : '';
+    const nearestHtml = analysis.nearestPrompts.length
+        ? `<div class="analysis-panel"><h4>Closest Tested Base Prompts</h4>${analysis.nearestPrompts.map(item => `
+            <p class="nearest-prompt">${escapeHTML(trimText(item.prompt, 180))}</p>
+        `).join('')}</div>`
+        : '';
+    const recommendationHtml = recommendations.map(rec => `
+        <article class="recommendation-card">
+            <h4>${formatParaphraseStyle(rec.style)}</h4>
+            <div class="score-pills">
+                <span>TF ${rec.data.averages[0].toFixed(2)}</span>
+                <span>Overall ${rec.data.overallAverage.toFixed(2)}</span>
+            </div>
+            <p>${escapeHTML(rec.reason)}</p>
+        </article>
+    `).join('');
 
-    const bestStyleForTopic = findBestPerformingStyle();
-    const recommendedWords = getKeywordsForStyle(bestStyleForTopic);
-
-    resultHTML += `<hr><p><strong>Recommendation:</strong></p>`;
-    resultHTML += `<p>For the '${state.currentDataset}' dataset, the best performing style is <strong>${formatParaphraseStyle(bestStyleForTopic)}</strong>.</p>`;
-    if (recommendedWords) {
-        resultHTML += `<p>Consider using words like: <em>${recommendedWords}</em></p>`;
-    }
-
-    resultsContainer.innerHTML = resultHTML;
+    resultsContainer.innerHTML = `
+        <div class="analysis-grid">
+            <div class="analysis-panel">
+                <h4>Detected Style</h4>
+                <p><strong>${formatParaphraseStyle(analysis.detectedStyle)}</strong></p>
+                <div class="score-pills">${detectedScore}</div>
+                ${signalItems ? `<ul>${signalItems}</ul>` : `<p>No strong paraphrase-style cue detected.</p>`}
+            </div>
+            <div class="analysis-panel">
+                <h4>Detected Topic</h4>
+                <p><strong>${analysis.topic.dataset.toUpperCase()}</strong></p>
+                <p>${escapeHTML(analysis.topic.evidence.join(', ') || 'general instruction-following')}</p>
+                ${warning}
+            </div>
+            ${riskHtml}
+            ${nearestHtml}
+        </div>
+        <div class="recommendation-grid">${recommendationHtml}</div>
+    `;
 }
 
-function findBestPerformingStyle() {
+function analyzePrompt(query) {
+    const tokens = tokenize(query);
+    const styleScores = new Map();
+    const signals = [];
+    STYLE_FEATURES.forEach(feature => {
+        const matches = feature.patterns.reduce((sum, pattern) => sum + countMatches(query, pattern), 0);
+        if (matches > 0) {
+            styleScores.set(feature.style, (styleScores.get(feature.style) || 0) + matches);
+            signals.push({ ...feature, matches });
+        }
+    });
+
+    const detectedStyle = Array.from(styleScores.entries())
+        .sort((a, b) => b[1] - a[1])[0]?.[0] || "instruction_original";
+    const topic = classifyTopic(query);
+    const nearestPrompts = findNearestPrompts(tokens);
+    const risks = collectRiskWarnings(query, signals, detectedStyle);
+    return { query, tokens, detectedStyle, styleScores, signals, topic, nearestPrompts, risks };
+}
+
+function classifyTopic(query) {
+    const scores = { alpaca: 0, gsm8k: 0, mmlu: 0 };
+    const evidence = { alpaca: [], gsm8k: [], mmlu: [] };
+    Object.entries(TOPIC_FEATURES).forEach(([dataset, features]) => {
+        features.forEach(feature => {
+            if (feature.pattern.test(query)) {
+                scores[dataset] += feature.weight;
+                evidence[dataset].push(feature.label);
+            }
+        });
+    });
+    const dataset = Object.entries(scores).sort((a, b) => b[1] - a[1])[0][0];
+    return {
+        dataset: scores[dataset] === 0 ? state.currentDataset : dataset,
+        scores,
+        evidence: evidence[dataset]
+    };
+}
+
+function collectRiskWarnings(query, signals, detectedStyle) {
+    const warnings = [];
+    signals.filter(signal => signal.risk === "high").forEach(signal => {
+        warnings.push(`${signal.label} is a high-fragility CALIPER cue for several model/dataset settings.`);
+    });
+    if (query.length > 700) warnings.push("Very long prompts can hide the core task; keep the instruction and output format easy to locate.");
+    if (tokenize(query).length < 5) warnings.push("Very short prompts can omit constraints that models need for reliable task completion.");
+    const data = state.aggregatedData[detectedStyle];
+    if (data && data.averages[0] < 6) {
+        warnings.push(`${formatParaphraseStyle(detectedStyle)} has low Task Fulfilment for the selected dataset/model.`);
+    }
+    return warnings;
+}
+
+function recommendStyles(analysis) {
+    return getRankedStyles().map(([style, data]) => {
+        if (style === "instruction_original" || data.count === 0) return null;
+        let score = data.averages[0] * 1.8 + data.overallAverage * 0.6 + (STABLE_STYLE_BONUS[style] || 0);
+        if (RISKY_STYLE_RE.test(style)) score -= 5;
+        if (analysis.topic.dataset === "gsm8k" && /(step|number|exact|markdown|direct)/.test(style)) score += 1.2;
+        if (analysis.topic.dataset === "mmlu" && /(direct|neutral|summary|risk|markdown)/.test(style)) score += 1.0;
+        if (analysis.topic.dataset === "alpaca" && /(bullet|markdown|summary|direct|polite)/.test(style)) score += 0.8;
+        if (analysis.styleScores.has(style) && !RISKY_STYLE_RE.test(style)) score += 0.4;
+        const reason = buildRecommendationReason(style, analysis.topic.dataset);
+        return { style, data, score, reason };
+    }).filter(Boolean).sort((a, b) => b.score - a.score);
+}
+
+function buildRecommendationReason(style, dataset) {
+    if (/step|numbered|exact/.test(style)) return "Keeps intermediate constraints explicit, which is useful for structured tasks.";
+    if (/bullet|markdown|summary/.test(style)) return "Keeps the request scannable without obscuring the task.";
+    if (/direct|polite/.test(style)) return "Preserves the core request with low stylistic overhead.";
+    if (/risk/.test(style)) return "Makes the judgment criteria explicit while retaining the original task.";
+    return `Ranks well for ${dataset.toUpperCase()} on the selected model while avoiding common obfuscation and typo failure modes.`;
+}
+
+function renderExampleSuggestions(examples) {
+    const container = document.getElementById('example-suggestions-container');
+    if (!examples.length) {
+        container.innerHTML = '';
+        return;
+    }
+    container.innerHTML = `
+        <div class="tested-examples">
+            <h3>Tested Examples To Try</h3>
+            <div class="example-grid">
+                ${examples.map(example => `
+                    <button class="example-card" type="button" data-prompt="${escapeAttribute(example.prompt)}">
+                        <span>${formatParaphraseStyle(example.style)}</span>
+                        <strong>TF ${example.tf.toFixed(1)}</strong>
+                        <p>${escapeHTML(trimText(example.prompt, 220))}</p>
+                    </button>
+                `).join('')}
+            </div>
+        </div>
+    `;
+    container.querySelectorAll('.example-card').forEach(card => {
+        card.addEventListener('click', () => {
+            document.getElementById('search-input').value = card.dataset.prompt;
+            analyzeAndDisplaySearch(card.dataset.prompt);
+        });
+    });
+}
+
+function getRandomTestedExamples(styles, excludedKeys, count) {
+    const preferred = state.examples.filter(example =>
+        styles.includes(example.style) && !excludedKeys.has(getExampleKey(example))
+    );
+    const fallback = state.examples.filter(example => !excludedKeys.has(getExampleKey(example)));
+    const candidates = preferred.length >= count ? preferred : preferred.concat(fallback);
+    const shuffled = candidates
+        .map(example => ({ example, sort: Math.random() }))
+        .sort((a, b) => a.sort - b.sort)
+        .map(item => item.example);
+    const selected = [];
+    const used = new Set(excludedKeys);
+    for (const example of shuffled) {
+        const key = getExampleKey(example);
+        if (used.has(key)) continue;
+        selected.push(example);
+        used.add(key);
+        if (selected.length === count) break;
+    }
+    return selected;
+}
+
+function findExampleForStyle(style, excludedKeys = new Set()) {
+    return state.examples
+        .filter(example => example.style === style && !excludedKeys.has(getExampleKey(example)))
+        .sort((a, b) => (b.tf - a.tf) || (b.average - a.average))[0] || null;
+}
+
+function getRankedStyles(metricIndex = 0) {
     return Object.entries(state.aggregatedData)
         .filter(([, data]) => data.count > 0)
-        .reduce((best, current) => {
-            return current[1].overallAverage > best[1].overallAverage ? current : best;
-        })[0];
+        .sort(([, a], [, b]) => (b.averages[metricIndex] - a.averages[metricIndex]) || (b.overallAverage - a.overallAverage));
 }
 
-function getKeywordsForStyle(style) {
-    const pattern = SEARCH_PATTERNS[style];
-    if (!pattern) return "N/A";
-    return pattern.source.replace(/\\b/g, '').replace(/[()|]/g, ' ').replace(/\s+/g, ' ').trim().split(' ').join(', ');
+function buildCorpusSignals() {
+    const termFreq = new Map();
+    const docs = state.instructions.map(item => {
+        const prompt = getPromptText(item);
+        const tokens = new Set(tokenize(prompt).filter(token => !STOPWORDS.has(token) && token.length > 2));
+        tokens.forEach(token => termFreq.set(token, (termFreq.get(token) || 0) + 1));
+        return { key: getPromptKey(item), prompt, tokens };
+    });
+    return { termFreq, docs };
+}
+
+function findNearestPrompts(queryTokens) {
+    const querySet = new Set(queryTokens.filter(token => !STOPWORDS.has(token) && token.length > 2));
+    if (!querySet.size || !state.corpusSignals.docs) return [];
+    return state.corpusSignals.docs.map(doc => {
+        let score = 0;
+        querySet.forEach(token => {
+            if (doc.tokens.has(token)) {
+                const freq = state.corpusSignals.termFreq.get(token) || 1;
+                score += 1 / Math.sqrt(freq);
+            }
+        });
+        return { ...doc, score };
+    }).filter(item => item.score > 0)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 3);
+}
+
+function tokenize(text) {
+    return (text.toLowerCase().match(/[a-z0-9]+(?:'[a-z]+)?/g) || []);
+}
+
+function countMatches(text, pattern) {
+    const flags = pattern.flags.includes('g') ? pattern.flags : `${pattern.flags}g`;
+    return (text.match(new RegExp(pattern.source, flags)) || []).length;
+}
+
+function getPromptKey(item) {
+    return item?.prompt_count ?? item?.prompt_id ?? item?.id ?? null;
+}
+
+function getPromptText(item) {
+    return item?.instruction_original || item?.instruction || item?.prompt || "";
+}
+
+function getExampleKey(example) {
+    return `${example.dataset}|${example.model}|${example.prompt_count}|${example.style}`;
+}
+
+function trimText(text, maxLength) {
+    if (!text || text.length <= maxLength) return text || "";
+    return `${text.slice(0, maxLength - 1).trim()}...`;
+}
+
+function escapeHTML(value) {
+    return String(value)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+}
+
+function escapeAttribute(value) {
+    return escapeHTML(value).replace(/`/g, "&#96;");
 }
 
 

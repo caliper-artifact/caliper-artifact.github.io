@@ -89,19 +89,20 @@
         </div>
 
         <div id="search-page" class="page">
-             <section class="card">
+            <section class="card">
                 <h2>Prompt Analyzer & Recommender</h2>
-                <p>Enter a prompt to analyze its potential performance and get recommendations.</p>
+                <p>Analyze prompt wording against CALIPER style, topic, and performance patterns.</p>
                 <div class="search-bar-container">
                     <textarea id="search-input" placeholder="Enter your prompt here... e.g., 'Hark, I pray thee, explain the concept of photosynthesis.'"></textarea>
                     <button id="search-button">Analyze Prompt</button>
                 </div>
+                <div id="example-suggestions-container"></div>
                 <div id="search-results-container"></div>
             </section>
             <section class="card">
-                <h2>Top Performing Prompts</h2>
-                <p>Examples of prompts that scored highly. Frequently occurring words in successful prompts are <span class="highlight-example">highlighted</span>.</p>
-                <div id="best-prompts-container"></div>
+                <h2>Top Performing Styles</h2>
+                <p>Highest-scoring paraphrase styles for the selected dataset and model, with tested example prompts.</p>
+                <div id="top-styles-container"></div>
             </section>
         </div>
 
