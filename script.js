@@ -567,7 +567,7 @@ function renderRankingItem(key, data, metricIndex, originalScore, isBaseline) {
     const tooltip = getStyleTooltip(key);
     const delta = !isBaseline && Number.isFinite(originalScore) ? score - originalScore : null;
     const deltaClass = delta === null ? 'baseline' : delta >= 0 ? 'positive' : 'negative';
-    const deltaText = delta === null ? 'baseline' : `${delta >= 0 ? '+' : ''}${delta.toFixed(2)} vs original`;
+    const deltaText = delta === null ? '' : `${delta >= 0 ? '+' : ''}${delta.toFixed(2)} vs original`;
 
     return `
         <div class="ranking-item${isBaseline ? ' baseline-ranking-item' : ''}">
