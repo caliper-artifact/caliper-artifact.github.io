@@ -3,8 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CALIPER Explorer</title>
-    <link rel="stylesheet" href="style.css?v=20260504-no-baseline-label">
+    <title>CALIPER: Prompt Paraphrase Robustness Explorer</title>
+    <link rel="stylesheet" href="style.css?v=20260504-clarity-copy">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.2/dist/chart.umd.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@sgratzl/chartjs-chart-boxplot@4.4.4/build/index.umd.min.js"></script>
@@ -12,8 +12,13 @@
 <body>
 
     <header>
-        <h1>CALIPER Explorer</h1>
+        <div class="header-copy">
+            <h1>CALIPER: Prompt Paraphrase Robustness Explorer</h1>
+            <p class="site-subtitle">Explore how semantically equivalent prompt rewrites change model performance across Alpaca, GSM8K, and MMLU.</p>
+            <p class="key-finding"><strong>Key Finding:</strong> Original prompts are often strongest; stylistic rewrites can meaningfully change task fulfilment, usefulness, reasoning, and formatting scores.</p>
+        </div>
         <div class="controls-container">
+            <p class="controls-heading">Choose a dataset and model to inspect how each paraphrase style affected evaluation scores.</p>
             <div class="control-group">
                 <label for="dataset-select">Dataset:</label>
                 <select id="dataset-select">
@@ -34,9 +39,9 @@
     </header>
 
     <nav>
-        <button id="nav-overview" class="nav-button active">Overview</button>
-        <button id="nav-ranking" class="nav-button">Ranking</button>
-        <button id="nav-search" class="nav-button">Search</button>
+        <button id="nav-overview" class="nav-button active">Performance Matrix</button>
+        <button id="nav-ranking" class="nav-button">Style Ranking</button>
+        <button id="nav-search" class="nav-button">Analyze a Prompt</button>
     </nav>
 
     <main>
@@ -46,6 +51,7 @@
             <section class="card">
                 <h2>Performance Matrix</h2>
                 <p>Full-artifact average scores for each paraphrase style across all metrics. Higher scores are greener.</p>
+                <p class="matrix-legend">Rows are paraphrase styles. Columns are evaluation metrics. Scores are 0-10; higher is better.</p>
                 <div id="overview-table-container" class="table-container"></div>
             </section>
             <section class="card">
@@ -91,7 +97,7 @@
         <div id="search-page" class="page">
             <section class="card">
                 <h2>Prompt Analyzer & Recommender</h2>
-                <p>Analyze prompt wording against CALIPER style, topic, and performance patterns.</p>
+                <p>Paste a prompt to detect risky wording patterns and get CALIPER-backed rewrite suggestions.</p>
                 <div class="search-bar-container">
                     <textarea id="search-input" placeholder="Enter your prompt here... e.g., 'Hark, I pray thee, explain the concept of photosynthesis.'"></textarea>
                     <button id="search-button">Analyze Prompt</button>
@@ -100,7 +106,7 @@
                 <div id="search-results-container"></div>
             </section>
             <section class="card">
-                <h2>Least Harmful Paraphrase Styles</h2>
+                <h2>Lower-Risk Rewrite Styles</h2>
                 <p>Recommended human-readable paraphrase styles from full artifact metrics, excluding high-fragility and decorative variants. Original prompt wording remains the baseline in Ranking.</p>
                 <div id="top-styles-container"></div>
             </section>
@@ -112,6 +118,6 @@
         <p>CALIPER anonymous artifact explorer</p>
     </footer>
 
-    <script src="script.js?v=20260504-no-baseline-label"></script>
+    <script src="script.js?v=20260504-clarity-copy"></script>
 </body>
 </html>
